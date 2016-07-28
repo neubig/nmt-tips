@@ -6,15 +6,15 @@ This tutorial will explain some practical tips about how to train a neural machi
 
 This tutorial will assume that you have already installed lamtram (and the [cnn](http://github.com/clab/cnn) backend library that it depends on). Then, use git to pull this tutorial and the corresponding data.
 
-  git clone http://github.com/neubig/nmt-tips
+    git clone http://github.com/neubig/nmt-tips
 
 The data in the `data/` directory is Japanese-English data that I have prepared doing some language-specific preprocessing (tokenization, lowercasing, etc.). Enter the `nmt-tips` directory
 
-	cd nmt-tips
+    cd nmt-tips
 
 and make a link to the directory in which you installed lamtram:
 
-	ln -s /full/path/to/lamtram/directory lamtram
+    ln -s /full/path/to/lamtram/directory lamtram
 
 ## Machine Translation
 
@@ -44,12 +44,12 @@ Next, we *decode* to generate the target sentence, one word at a time. This is d
 
 We then pick the word that has highest probability:
 
-	e'_i = ARGMAX_k(pe_i[k])
+    e'_i = ARGMAX_k(pe_i[k])
 
 We then update the hidden state with this predicted value:
 
-	we'_i = WORDREP(e'_i; Φ_ewr)
-	g_i = RNN(g_{i-1}, we'_i; Φ_ernn)
+    we'_i = WORDREP(e'_i; Φ_ewr)
+    g_i = RNN(g_{i-1}, we'_i; Φ_ernn)
 
 This process is continued until a special "end of sentence" symbol is chosen for `e'_i`. 
 
@@ -57,52 +57,52 @@ This process is continued until a special "end of sentence" symbol is chosen for
 
 Note that the various elements of the model explained in the previous model have parameters `Φ`. These need to be learned in order to generate high-quality translations. The standard way of training neural networks is by using maximum likelihood. This is done by maximizing the log likelihood of the training data:
 
-	Φ' = ARGMAX_{Φ}( Σ_{E,F} log P(E|F;Φ) )
+    Φ' = ARGMAX_{Φ}( Σ_{E,F} log P(E|F;Φ) )
 
 or equivalently minimizing the negative log likelihood:
 
-	Φ' = ARGMIN_{Φ}( - Σ_{E,F} log P(E|F;Φ) )
+    Φ' = ARGMIN_{Φ}( - Σ_{E,F} log P(E|F;Φ) )
 
 The standard way we do this minimization is through *stochastic gradient descent* (SGD), where we calculate the gradient of the negative log probability for a single example `<F,E>`
 
-	∇_{Φ} -log P(E|F;Φ)
+    ∇_{Φ} -log P(E|F;Φ)
 
 then update the parameters based on an update rule:
 
-	Φ ← UPDATE(Φ, ∇_{Φ} -log P(E|F;Φ))
+    Φ ← UPDATE(Φ, ∇_{Φ} -log P(E|F;Φ))
 
 The most standard update rule simply subtracts the gradient of the negative log likelihood multiplied by a learning rate `γ`
 
-  SGD_UPDATE(Φ, ∇_{Φ} -log P(E|F;Φ), γ) := Φ - γ * ∇_{Φ} -log P(E|F;Φ)
+    SGD_UPDATE(Φ, ∇_{Φ} -log P(E|F;Φ), γ) := Φ - γ * ∇_{Φ} -log P(E|F;Φ)
 
 Let's try to do this with lamtram. First make a directory to hold the model:
 
-  mkdir models
+    mkdir models
 
 then train the model with the following commands:
 
-	lamtram/src/lamtram/lamtram-train \
-	  --model_type encdec \
-	  --train_src data/train.ja \
-	  --train_trg data/train.en \
-	  --trainer sgd \
-	  --learning_rate 0.1 \
-	  --rate_decay 1.0 \
-	  --epochs 10 \
-	  --model_out models/encdec.mod
+    lamtram/src/lamtram/lamtram-train \
+      --model_type encdec \
+      --train_src data/train.ja \
+      --train_trg data/train.en \
+      --trainer sgd \
+      --learning_rate 0.1 \
+      --rate_decay 1.0 \
+      --epochs 10 \
+      --model_out models/encdec.mod
 
 Here, `model_type` indicates that we want to train an encoder-decoder, `train_src` and `train_trg` indicate the source and target training data files. `trainer` specifies that we will use the standard update rule, and `learning_rate` specifies `γ`. `rate_decay` will be explained later. `epochs` is the number of passes over the training data, and `model_out` is the place where the model is written out to.
 
 If training is going well, we will be able to see the following log output:
 
-  Epoch 1 sent 100: ppl=1122.07, unk=0, rate=0.1, time=2.04832 (502.852 w/s)
-  Epoch 1 sent 200: ppl=737.81, unk=0, rate=0.1, time=4.08551 (500.305 w/s)
-  Epoch 1 sent 300: ppl=570.027, unk=0, rate=0.1, time=6.07408 (501.311 w/s)
-  Epoch 1 sent 400: ppl=523.924, unk=0, rate=0.1, time=8.23374 (502.566 w/s)
+    Epoch 1 sent 100: ppl=1122.07, unk=0, rate=0.1, time=2.04832 (502.852 w/s)
+    Epoch 1 sent 200: ppl=737.81, unk=0, rate=0.1, time=4.08551 (500.305 w/s)
+    Epoch 1 sent 300: ppl=570.027, unk=0, rate=0.1, time=6.07408 (501.311 w/s)
+    Epoch 1 sent 400: ppl=523.924, unk=0, rate=0.1, time=8.23374 (502.566 w/s)
 
 `ppl` is reporting perplexity on the training set, which is equal to the exponent of the per-word negative log probability:
 
-	PPL(Φ) = exp( -(Σ_{E,F} log P(E|F;Φ))/(Σ_E |E|) )
+    PPL(Φ) = exp( -(Σ_{E,F} log P(E|F;Φ))/(Σ_E |E|) )
 
 For this perplexity, lower is better, so if it's decreasing we're learning something.
 
@@ -114,11 +114,11 @@ One thing you'll notice is that training is really slow... There are 10,000 sent
 
 One powerful tool to speed up training of neural networks is mini-batching. The idea behind minibatching is that instead of calculating the gradient for a single example `<E,F>`
 
-	∇_{Φ} log P(E|F;Φ)
+    ∇_{Φ} log P(E|F;Φ)
 
 we calculate the gradients for multiple examples at one time
 
-	∇_{Φ} Σ_{<E,F> in minibatch} log P(E|F;Φ)
+    ∇_{Φ} Σ_{<E,F> in minibatch} log P(E|F;Φ)
 
 then perform the update of the model's parameters using this aggregated gradient. This has several advantages:
 
@@ -133,10 +133,10 @@ On the other hand, large minibatches do have disadvantages:
 
 Anyway, let's try this in lamtram by adding the `--minibatch_size NUM_WORDS` option, where `NUM_WORDS` is the number of words included in each mini-batch. If we set `NUM_WORDS` to be equal to 256, and re-run the previous command, we get the following log: 
 
-  Epoch 1 sent 106: ppl=3970.52, unk=0, rate=0.1, time=0.526336 (2107.02 w/s)
-  Epoch 1 sent 201: ppl=2645.1, unk=0, rate=0.1, time=1.00862 (2071.15 w/s)
-  Epoch 1 sent 316: ppl=1905.16, unk=0, rate=0.1, time=1.48682 (2068.84 w/s)
-  Epoch 1 sent 401: ppl=1574.61, unk=0, rate=0.1, time=1.82187 (2064.91 w/s)
+    Epoch 1 sent 106: ppl=3970.52, unk=0, rate=0.1, time=0.526336 (2107.02 w/s)
+    Epoch 1 sent 201: ppl=2645.1, unk=0, rate=0.1, time=1.00862 (2071.15 w/s)
+    Epoch 1 sent 316: ppl=1905.16, unk=0, rate=0.1, time=1.48682 (2068.84 w/s)
+    Epoch 1 sent 401: ppl=1574.61, unk=0, rate=0.1, time=1.82187 (2064.91 w/s)
 
 Looking at the `w/s` (words per second) on the right side of the log, we can see that we're processing data 4 times faster than before, nice! Let's still hit `CTRL+C` though, as we'll speed up training even more in the next section.
 
@@ -146,16 +146,16 @@ In addition to the standard `SGD_UPDATE` rule listed above, there are a myriad o
 
 Try re-running the following command:
 
-	lamtram/src/lamtram/lamtram-train \
-	  --model_type encdec \
-	  --train_src data/train.ja \
-	  --train_trg data/train.en \
-	  --trainer adam \
-	  --learning_rate 0.001 \
-	  --minibatch_size 256 \
-	  --rate_decay 1.0 \
-	  --epochs 10 \
-	  --model_out models/encdec.mod
+    lamtram/src/lamtram/lamtram-train \
+      --model_type encdec \
+      --train_src data/train.ja \
+      --train_trg data/train.en \
+      --trainer adam \
+      --learning_rate 0.001 \
+      --minibatch_size 256 \
+      --rate_decay 1.0 \
+      --epochs 10 \
+      --model_out models/encdec.mod
 
 You'll probably find that the perplexity drops significantly faster than when using the standard SGD update (after the first iteration, I had a perplexity of 287 with standard SGD, and 233 with Adam).
 
@@ -169,16 +169,16 @@ TODO: Make this explanation more complete.
 
 If you want to try to train an attentional model with lamtram, just change all mentions of `encdec` above to `encatt` (for encoder/attentional), and an attentional model will be trained for you. For example, we can run the following command:
 
-	lamtram/src/lamtram/lamtram-train \
-	  --model_type encatt \
-	  --train_src data/train.ja \
-	  --train_trg data/train.en \
-	  --trainer adam \
-	  --learning_rate 0.001 \
-	  --minibatch_size 256 \
-	  --rate_decay 1.0 \
-	  --epochs 10 \
-	  --model_out models/encatt.mod
+    lamtram/src/lamtram/lamtram-train \
+      --model_type encatt \
+      --train_src data/train.ja \
+      --train_trg data/train.en \
+      --trainer adam \
+      --learning_rate 0.001 \
+      --minibatch_size 256 \
+      --rate_decay 1.0 \
+      --epochs 10 \
+      --model_out models/encatt.mod
 
 If you compare the perplexities between these two methods you may see some difference in the perplexity results after 10 epochs. When I ran these, I got a perplexity of 19 for the encoder-decoder, and a perplexity of 11 for the attentional model, demonstrating that it's a bit easier for the attentional model to model the training corpus correctly.
 
@@ -200,25 +200,25 @@ Now that we have a couple translation models, and know how good they are doing o
 
 The first way we can measure accuracy is by calculating the perplexity on this held-out data. This will measure the accuracy of the NMT systems probability estimates `P(E|F)`, and see how well they generalize to new data. We can do this for the encoder-decoder model using the following command:
 
-  lamtram/src/lamtram/lamtram \
-    --operation ppl \
-    --models_in encdec=models/encdec.mod \
-    --src_in data/test.ja \
-    < data/test.en
+    lamtram/src/lamtram/lamtram \
+      --operation ppl \
+      --models_in encdec=models/encdec.mod \
+      --src_in data/test.ja \
+      < data/test.en
 
 and likewise for the attentional model by replacing `encdec` with `encatt` (twice) in the command above. Note here that we're actually getting perplexities that are much worse for the test set than we did on the training set (I got train/test perplexities of 19/118 for the `encdec` model and 11/112 for the `encatt` model). This is for two reasons: lack of handling of words that don't occur in the training set, and overfitting of the training set. I'll discuss these later.
 
 Next, let's try to actually generate translations of the input using the following command (likewise for the attentional model by swapping `encdec` into `encatt`):
 
-  lamtram/src/lamtram/lamtram \
-    --operation gen \
-    --models_in encdec=models/encdec.mod \
-    --src_in data/test.ja \
-    < data/test.en > models/encdec.en
+    lamtram/src/lamtram/lamtram \
+      --operation gen \
+      --models_in encdec=models/encdec.mod \
+      --src_in data/test.ja \
+      < data/test.en > models/encdec.en
 
 We can then measure the accuracy of this model using a measure called BLEU score (Papineni et al. 2002), which measures the similarity between the translation generated by the model and a reference translation created by a human (`data/test.en`):
 
-  scripts/multi-bleu.pl data/test.en < models/encdec.en
+    scripts/multi-bleu.pl data/test.en < models/encdec.en
 
 This gave me a BLEU score of 1.76 for `encdec` and 2.17 for `encatt`, which shows that we're getting something. But generally we need a BLEU score of at least 15 or so to have something remotely readable, so we're going to have to try harder.
 
@@ -226,21 +226,21 @@ This gave me a BLEU score of 1.76 for `encdec` and 2.17 for `encatt`, which show
 
 The first problem that we have to tackle is that currently the model has no way of handling unknown words that don't exist in the training data. The most common way of fixing this problem is by replacing some of the words in the training data with a special `<unk>` symbol, which will also be used when we observe an unknown word in the testing data. For example, we can replace all words that appear only once in the training corpus by performing the following commands.
 
-  lamtram/script/unk-single.pl < data/train.en > data/train.unk.en
-  lamtram/script/unk-single.pl < data/train.ja > data/train.unk.ja
+    lamtram/script/unk-single.pl < data/train.en > data/train.unk.en
+    lamtram/script/unk-single.pl < data/train.ja > data/train.unk.ja
 
 Then we can re-train the attentional model using this new data:
 
-	lamtram/src/lamtram/lamtram-train \
-	  --model_type encatt \
-	  --train_src data/train.unk.ja \
-	  --train_trg data/train.unk.en \
-	  --trainer adam \
-	  --learning_rate 0.001 \
-	  --minibatch_size 256 \
-	  --rate_decay 1.0 \
-	  --epochs 10 \
-	  --model_out models/encatt-unk.mod
+    lamtram/src/lamtram/lamtram-train \
+      --model_type encatt \
+      --train_src data/train.unk.ja \
+      --train_trg data/train.unk.en \
+      --trainer adam \
+      --learning_rate 0.001 \
+      --minibatch_size 256 \
+      --rate_decay 1.0 \
+      --epochs 10 \
+      --model_out models/encatt-unk.mod
 
 This greatly helps our accuracy on the test set: when I measured the perplexity and BLEU score on the test set, this gave me TODO and TODO, quite a bit better than before! It also speeds up training quite a bit because it reduces the size of the vocabulary.
 
