@@ -242,7 +242,7 @@ Then we can re-train the attentional model using this new data:
       --epochs 10 \
       --model_out models/encatt-unk.mod
 
-This greatly helps our accuracy on the test set: when I measured the perplexity and BLEU score on the test set, this gave me TODO and TODO, quite a bit better than before! It also speeds up training quite a bit because it reduces the size of the vocabulary.
+This greatly helps our accuracy on the test set: when I measured the perplexity and BLEU score on the test set, this gave me 58 and 3.32 respectively, a bit better than before! It also speeds up training quite a bit because it reduces the size of the vocabulary.
 
 ## Using a Development Set
 
@@ -250,17 +250,102 @@ The second problem, over-fitting, can be fixed somewhat by using a development s
 
 ### Early Stopping
 
-TODO
+The first way we can prevent overfitting is regularly measure the accuracy on the development data, and stop training when we get the model that has the best accuracy on this data set. This is called "early stopping" and used in most neural network models. Running this in lamtram is easy, just specify the `dev_src` and `dev_trg` options as follows. (You may also want to increase the number of training epochs to 20 or so to really witness how much the model overfits in later stages of training.)
+
+    lamtram/src/lamtram/lamtram-train \
+      --model_type encatt \
+      --train_src data/train.unk.ja \
+      --train_trg data/train.unk.en \
+      --dev_src data/dev.ja \
+      --dev_trg data/dev.en \
+      --trainer adam \
+      --learning_rate 0.001 \
+      --minibatch_size 256 \
+      --rate_decay 1.0 \
+      --epochs 10 \
+      --model_out models/encatt-unk-stop.mod
+
+You'll notice that now after every pass over the training data, we're measuring the perplexity on the development set, and the model is written out only when the perplexity is its best value yet. In my case, the development perplexity reaches its peak on the 8th iteration then starts getting worse. In my case, by stopping training on the 8th iteration, the perplexity improved a slight bit to 56, but this didn't make a big difference in BLEU.
 
 ### Rate Decay
 
+Another trick that is often used is "rate decay" this reduces the learning rate `γ` every time the perplexity gets worse on the development set. This causes the model to update the parameters a bit more conservatively, which as an effect of controlling overfitting. We can enable rate decay by setting the `rate_decay` parameter to 0.5 (which will halve the learning rate everytime the development perplexity gets worse). This prolongs training a little bit, so let's also set the number of epochs to 15, just to make sure that training has run its course.
+
+    lamtram/src/lamtram/lamtram-train \
+      --model_type encatt \
+      --train_src data/train.unk.ja \
+      --train_trg data/train.unk.en \
+      --dev_src data/dev.ja \
+      --dev_trg data/dev.en \
+      --trainer adam \
+      --learning_rate 0.001 \
+      --minibatch_size 256 \
+      --rate_decay 0.5 \
+      --epochs 15 \
+      --model_out models/encatt-unk-decay.mod
+
+In my case, the rate was decayed on every epoch after the 8th. This didn't result in an improvement on this particular data set, but in many cases this rate decay can be quite helpful.
+
 ## Using an External Lexicon
+
+One way to further help out neural MT systems is to incorporate an external lexicon indicating mappings between words (and their probabilities).
 
 ### Training the Lexicon
 
+First, we need to create the lexicon. This can be done using a word alignment tool that finds the correspondences between words in the source and target sentences. Here we will use [fast_align](https://github.com/clab/fast_align) because it is simple to use and fast, but other word alignment tools such as [GIZA++](https://github.com/moses-smt/giza-pp) or [Nile](https://github.com/jasonriesa/nile) might give you better results.
+
+First, let's download and build fast_align:
+
+    git clone https://github.com/clab/fast_align.git
+    mkdir fast_align/build
+    cd fast_align/build
+    cmake ../
+    make
+    cd ../../
+
+Then, we can run fast_align on the training data to build a lexicon, and use the `convert-cond.pl` script to convert it into a format that lamtram can use.
+
+    mkdir lexicon
+    paste data/train.{ja,en} | sed 's/	/ ||| /g' > lexicon/train.jaen
+    fast_align/build/fast_align -i lexicon/train.jaen -v -p lexicon/train.jaen.cond > lexicon/train.jaen.align
+    lamtram/script/convert-cond.pl < lexicon/train.jaen.cond > lexicon/train.jaen.prob    
+
 ### Unknown Word Replacement
 
+The first way we can use this lexicon is by using it to map unknown words in the source language into the target language. Without a lexicon, when an unknown word is predicted in the target, the NMT system will find the word in the source sentence with the highest alignment weight `a_j` and map it into the target as-is. If we have a lexicon, if the source word has a lexicon entry, instead of mapping the word `f_j` as-is, the NMT system will output the word with the highest probability `P_{lex}(e|f_j)` in the lexicon.
+
+This can be done in lamtram by specifying the `map_in` function during decoding:
+
+    lamtram/src/lamtram/lamtram \
+      --operation gen \
+      --models_in encatt=models/encatt-unk-stop.mod \
+      --src_in data/test.ja \
+      --map_in lexicon/train.jaen.prob \
+      < data/test.en > models/encatt-unk-stop-rep.en
+
+This helped a little bit, raising the BLEU score from 2.58 to 2.63 for my model.
+
 ### Improving Translation Probabilities
+
+Another way we can use lexicons is to use them to bootstrap translation probabilities (Arthur et al. 2016).
+
+TODO: formal explanation
+
+This can be done by adding the `attention_lex` options as follows. "alpha" is a parameter to adjust the strength of the lexicon, where smaller indicates that more weight will be put on the lexicon probabilities:
+
+    lamtram/src/lamtram/lamtram-train \
+      --model_type encatt \
+      --train_src data/train.unk.ja \
+      --train_trg data/train.unk.en \
+      --dev_src data/dev.ja \
+      --dev_trg data/dev.en \
+      --attention_lex prior:file=lexicon/train.jaen.prob:alpha=0.0001 \
+      --trainer adam \
+      --learning_rate 0.001 \
+      --minibatch_size 256 \
+      --rate_decay 1.0 \
+      --epochs 10 \
+      --model_out models/encatt-unk-stop-lex.mod
 
 ## Changing Network Structure
 
@@ -334,3 +419,4 @@ Now, you know a few practical things about making an accurate neural MT system. 
 * Bahdanau et al. 2015
 * Luong et al. 2015
 * Goldberg 2015
+* Arthur et al. 2016
