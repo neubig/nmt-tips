@@ -327,11 +327,13 @@ This helped a little bit, raising the BLEU score from 2.58 to 2.63 for my model.
 
 ### Improving Translation Probabilities
 
-Another way we can use lexicons is to use them to bootstrap translation probabilities (Arthur et al. 2016).
+Another way we can use lexicons is to use them to bootstrap translation probabilities (Arthur et al. 2016). This works by calculating a lexicon probability based on the attention weights `a_j`
 
-TODO: formal explanation
+    P_{lex}(e_i | F, a) = Σ_j a_j P(e_i | f_j)
 
-This can be done by adding the `attention_lex` options as follows. "alpha" is a parameter to adjust the strength of the lexicon, where smaller indicates that more weight will be put on the lexicon probabilities:
+This is then added as an additional information source when calculating the softmax probabilities over the output. The advantage of this method is that the lexicon is fast to train, and also contains information about what words can be translated into others in an efficient manner, making it easier for the MT system to learn correct translations, particularly of rare words.
+
+This method can be applied by adding the `attention_lex` options as follows. "alpha" is a parameter to adjust the strength of the lexicon, where smaller indicates that more weight will be put on the lexicon probabilities:
 
     lamtram/src/lamtram/lamtram-train \
       --model_type encatt \
@@ -346,6 +348,8 @@ This can be done by adding the `attention_lex` options as follows. "alpha" is a 
       --rate_decay 1.0 \
       --epochs 10 \
       --model_out models/encatt-unk-stop-lex.mod
+
+In my running, this iproves our perplexity from 57 to 37, and BLEU score from 2.48 to 8.83, nice!
 
 ## Changing Network Structure
 
