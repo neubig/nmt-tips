@@ -1,5 +1,7 @@
 lamtram
 preproc
 models
-output
 data-prep
+data/train.unk.ja
+data/train.unk.en
+*.swp

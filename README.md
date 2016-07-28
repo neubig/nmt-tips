@@ -2,9 +2,9 @@
 
 by [Graham Neubig](http://phontron.com) (Nara Institute of Science and Technology/Carnegie Mellon University)
 
-This tutorial will explain some pratical tips about how to train a neural machine translation system. It is partly based around examples using the [lamtram](http://github.com/neubig/lamtram) toolkit. Note that this will not cover the theory behind NMT in detail, nor is it a survey meant to cover all the work on neural MT, but it will show you how to use lamtram, and also demonstrate some things that you have to do in order to make a system that actually works well (focusing on ones that are implemented in my toolkit).
+This tutorial will explain some practical tips about how to train a neural machine translation system. It is partly based around examples using the [lamtram](http://github.com/neubig/lamtram) toolkit. Note that this will not cover the theory behind NMT in detail, nor is it a survey meant to cover all the work on neural MT, but it will show you how to use lamtram, and also demonstrate some things that you have to do in order to make a system that actually works well (focusing on ones that are implemented in my toolkit).
 
-This tutorial will assume that you have installed lamtram already somewhere. Then, use git to pull this tutorial and the corresponding data.
+This tutorial will assume that you have already installed lamtram (and the [cnn](http://github.com/clab/cnn) backend library that it depends on). Then, use git to pull this tutorial and the corresponding data.
 
   git clone http://github.com/neubig/nmt-tips
 
@@ -55,17 +55,25 @@ This process is continued until a special "end of sentence" symbol is chosen for
 
 ## Training NMT Models with Maximum Likelihood
 
-Note that the various elements of the model explained in the previous model have parameters `Φ`. These need to be learned in order to generate high-quality translations. The standard way of training neural networks is by using maximum likelihood. This is done by maximizing the (log) likelihood of the training data:
+Note that the various elements of the model explained in the previous model have parameters `Φ`. These need to be learned in order to generate high-quality translations. The standard way of training neural networks is by using maximum likelihood. This is done by maximizing the log likelihood of the training data:
 
 	Φ' = ARGMAX_{Φ}( Σ_{E,F} log P(E|F;Φ) )
 
-The standard way we maximize this likelihood is through *stochastic gradient descent*, where we calculate the gradient of the log probability for a single example `<F,E>`
+or equivalently minimizing the negative log likelihood:
 
-	∇_{Φ} log P(E|F;Φ)
+	Φ' = ARGMIN_{Φ}( - Σ_{E,F} log P(E|F;Φ) )
+
+The standard way we do this minimization is through *stochastic gradient descent* (SGD), where we calculate the gradient of the negative log probability for a single example `<F,E>`
+
+	∇_{Φ} -log P(E|F;Φ)
 
 then update the parameters based on an update rule:
 
-	Φ ← UPDATE(Φ, ∇_{Φ} log P(E|F;Φ))
+	Φ ← UPDATE(Φ, ∇_{Φ} -log P(E|F;Φ))
+
+The most standard update rule simply subtracts the gradient of the negative log likelihood multiplied by a learning rate `γ`
+
+  SGD_UPDATE(Φ, ∇_{Φ} -log P(E|F;Φ), γ) := Φ - γ * ∇_{Φ} -log P(E|F;Φ)
 
 Let's try to do this with lamtram. First make a directory to hold the model:
 
@@ -73,7 +81,7 @@ Let's try to do this with lamtram. First make a directory to hold the model:
 
 then train the model with the following commands:
 
-	lamtram/src/lamtram/lamtram \
+	lamtram/src/lamtram/lamtram-train \
 	  --model_type encdec \
 	  --train_src data/train.ja \
 	  --train_trg data/train.en \
@@ -83,11 +91,14 @@ then train the model with the following commands:
 	  --epochs 10 \
 	  --model_out models/encdec.mod
 
-Here, `model_type` indicates that we want to train an encoder-decoder, `train_src` and `train_trg` indicate the source and target training data files. `trainer`, `learning_rate`, and `rate_decay` specify parameters of the `UPDATE()` function, which I'll explain later. `epochs` is the number of passes over the training data, and `model_out` is the place where the model is written out to.
+Here, `model_type` indicates that we want to train an encoder-decoder, `train_src` and `train_trg` indicate the source and target training data files. `trainer` specifies that we will use the standard update rule, and `learning_rate` specifies `γ`. `rate_decay` will be explained later. `epochs` is the number of passes over the training data, and `model_out` is the place where the model is written out to.
 
 If training is going well, we will be able to see the following log output:
 
-	TODO
+  Epoch 1 sent 100: ppl=1122.07, unk=0, rate=0.1, time=2.04832 (502.852 w/s)
+  Epoch 1 sent 200: ppl=737.81, unk=0, rate=0.1, time=4.08551 (500.305 w/s)
+  Epoch 1 sent 300: ppl=570.027, unk=0, rate=0.1, time=6.07408 (501.311 w/s)
+  Epoch 1 sent 400: ppl=523.924, unk=0, rate=0.1, time=8.23374 (502.566 w/s)
 
 `ppl` is reporting perplexity on the training set, which is equal to the exponent of the per-word negative log probability:
 
@@ -95,53 +106,161 @@ If training is going well, we will be able to see the following log output:
 
 For this perplexity, lower is better, so if it's decreasing we're learning something.
 
+One thing you'll notice is that training is really slow... There are 10,000 sentences in our small training corpus, but you're probably tired of waiting already. The next section will explain how we speed things up, so let's let it run for a while, and then when you get tired of waiting hit `CTRL+C` to stop training.
+
+## Speeding Up Training
+
+### Minibatches
+
+One powerful tool to speed up training of neural networks is mini-batching. The idea behind minibatching is that instead of calculating the gradient for a single example `<E,F>`
+
+	∇_{Φ} log P(E|F;Φ)
+
+we calculate the gradients for multiple examples at one time
+
+	∇_{Φ} Σ_{<E,F> in minibatch} log P(E|F;Φ)
+
+then perform the update of the model's parameters using this aggregated gradient. This has several advantages:
+
+* Gradient updates take time, so if we have N sentences in our minibatch, we can perform N times fewer gradient updates.
+* More importantly, by sticking sentences together in a batch, we can share some of the calculations between them. For example, where non-minibatched neural networks might multiply the hidden vector `h_i` by a weight matrix `W`, when we are mini-batching  we can connect `h_i` from different sentences into a single matrix `H` and do a big matrix-matrix multiplication `W * H`, which is much more efficient.
+* Also, using mini-batches can make the updates to the parameters more stable, as information from multiple sentences is considered at one time.
+
+On the other hand, large minibatches do have disadvantages:
+
+* If our mini-batch sizes are too big, sometimes we may run out of memory by trying to store too many calculated values in memory at once.
+* While the calculation of each sentence becomes faster, because the total number of updates is fewer, sometimes training can be slower than when not using mini-batches.
+
+Anyway, let's try this in lamtram by adding the `--minibatch_size NUM_WORDS` option, where `NUM_WORDS` is the number of words included in each mini-batch. If we set `NUM_WORDS` to be equal to 256, and re-run the previous command, we get the following log: 
+
+  Epoch 1 sent 106: ppl=3970.52, unk=0, rate=0.1, time=0.526336 (2107.02 w/s)
+  Epoch 1 sent 201: ppl=2645.1, unk=0, rate=0.1, time=1.00862 (2071.15 w/s)
+  Epoch 1 sent 316: ppl=1905.16, unk=0, rate=0.1, time=1.48682 (2068.84 w/s)
+  Epoch 1 sent 401: ppl=1574.61, unk=0, rate=0.1, time=1.82187 (2064.91 w/s)
+
+Looking at the `w/s` (words per second) on the right side of the log, we can see that we're processing data 4 times faster than before, nice! Let's still hit `CTRL+C` though, as we'll speed up training even more in the next section.
+
+### Other Update Rules
+
+In addition to the standard `SGD_UPDATE` rule listed above, there are a myriad of additional ways to update the parameters, including "SGD With Momentum", "Adagrad", "Adadelta", "RMSProp", "Adam", and many others. Explaining these in detail is beyond the scope of this tutorial, but it suffices to say that these will more quickly find a good place in parameter space than the standard method above. My current favorite optimization method is "Adam" (Kingma et al. 2012), which can be run by setting `--trainer adam`. We'll also have to change the initial learning rate to `--learning_rate 0.001`, as a learning rate of 0.1 is too big when using Adam.
+
+Try re-running the following command:
+
+	lamtram/src/lamtram/lamtram-train \
+	  --model_type encdec \
+	  --train_src data/train.ja \
+	  --train_trg data/train.en \
+	  --trainer adam \
+	  --learning_rate 0.001 \
+	  --minibatch_size 256 \
+	  --rate_decay 1.0 \
+	  --epochs 10 \
+	  --model_out models/encdec.mod
+
+You'll probably find that the perplexity drops significantly faster than when using the standard SGD update (after the first iteration, I had a perplexity of 287 with standard SGD, and 233 with Adam).
+
 ## Attention
 
 ### Basic Concept
 
-One of the major advances in NMT has been the introduction of attention (Bahdanau et al. 2015). The basic idea behind attention is that when we want to generate a particular target word `e_i`, that we will want to focus on a particular source word `f_j`, or a couple words.
+One of the major advances in NMT has been the introduction of attention (Bahdanau et al. 2015). The basic idea behind attention is that when we want to generate a particular target word `e_i`, that we will want to focus on a particular source word `f_j`, or a couple words. In order to express this, attention calculates a "context vector" `c_i` that 
 
-TODO: Make this explanation more.
+TODO: Make this explanation more complete.
 
-If you want to try to train an attentional model with lamtram, just change all mentions of `encdec` above to `encatt` (for encoder/attentional), and an attentional model will be trained for you. Try this, and I think you will see that perplexity decreases signficantly more quickly, demonstrating that we've made the learning problem a bit easier.
+If you want to try to train an attentional model with lamtram, just change all mentions of `encdec` above to `encatt` (for encoder/attentional), and an attentional model will be trained for you. For example, we can run the following command:
 
-### Types of Attention
+	lamtram/src/lamtram/lamtram-train \
+	  --model_type encatt \
+	  --train_src data/train.ja \
+	  --train_trg data/train.en \
+	  --trainer adam \
+	  --learning_rate 0.001 \
+	  --minibatch_size 256 \
+	  --rate_decay 1.0 \
+	  --epochs 10 \
+	  --model_out models/encatt.mod
 
-There are several ways to calculate attention, such as those investigate by Luong et al. (2015):
+If you compare the perplexities between these two methods you may see some difference in the perplexity results after 10 epochs. When I ran these, I got a perplexity of 19 for the encoder-decoder, and a perplexity of 11 for the attentional model, demonstrating that it's a bit easier for the attentional model to model the training corpus correctly.
 
-* Dot Product: TODO
-* Bilinear: TODO
-* Multi-layer Perceptron: TODO
+### Types of Attention (Advanced)
 
-In practice, I've found that dot product and multi-layer perceptron tend to perform well, but the results are different for different corpora. I'd recommend trying both and seeing which one works the best on your particular data set. 
+There are several ways to calculate the attention values `a_{i,j}`, such as those investigated by Luong et al. (2015). The following ones are implemented in lamtram, and can be changed using the `--attention_type TYPE` option as noted below.
+
+* Dot Product: Calculate the dot product `a_{i,j} = g_i * transpose(wf_j)` (`--attention_type dot`).
+* Bilinear: A bilinear model that puts a parameterized transform `Φ_bilin` between the two vectors `a_{i,j} = g_i * Φ_bilin * transpose(wf_j)` (`--attention_type bilin`).
+* Multi-layer Perceptron: Input the two vectors into a multi-layer perceptron with a hidden layer of size `LAYERNODES`, `a_{i,j} = MLP([g_i, wf_j]; Φ_mlp)` (`--attention_type mlp:LAYERNODES`)
+
+In practice, I've found that dot product tends to work pretty well, and because of this it's the default setting in lamtram. However, the multi-layer perceptron also performs well in some cases, so sometimes it's worth trying.
+
+In addition, Luong et al. (2015) introduced a method called "attention feeding," which uses the context vector `c_{i-1}` of the previous state as input to the decoder neural network. This is enabled by default using the `--attention_feed true` option in lamtram, as it seems to help somewhat consistently.
 
 ## Testing NMT Systems
 
-Now that we have a system, and know how good it is doing on the training set (according to perplexity), we will want to test to see how well it will do on data that is not included in training.
+Now that we have a couple translation models, and know how good they are doing on the training set (according to perplexity), we will want to test to see how well they will do on data that is not used in training. We do this by measuring accuracy on some test data, conveniently prepared in `data/test.ja` and `data/test.en`.
 
-TODO: Command to measure perplexity.
+The first way we can measure accuracy is by calculating the perplexity on this held-out data. This will measure the accuracy of the NMT systems probability estimates `P(E|F)`, and see how well they generalize to new data. We can do this for the encoder-decoder model using the following command:
 
-TODO: Command to decode and measure BLEU.
+  lamtram/src/lamtram/lamtram \
+    --operation ppl \
+    --models_in encdec=models/encdec.mod \
+    --src_in data/test.ja \
+    < data/test.en
 
-Of course, these results are not yet satisfying, so we'll have to do some more work to get things working properly.
+and likewise for the attentional model by replacing `encdec` with `encatt` (twice) in the command above. Note here that we're actually getting perplexities that are much worse for the test set than we did on the training set (I got train/test perplexities of 19/118 for the `encdec` model and 11/112 for the `encatt` model). This is for two reasons: lack of handling of words that don't occur in the training set, and overfitting of the training set. I'll discuss these later.
 
-## Handling Unknown Words
+Next, let's try to actually generate translations of the input using the following command (likewise for the attentional model by swapping `encdec` into `encatt`):
 
-### Thresholding Unknown Words
+  lamtram/src/lamtram/lamtram \
+    --operation gen \
+    --models_in encdec=models/encdec.mod \
+    --src_in data/test.ja \
+    < data/test.en > models/encdec.en
 
-### Unknown Word Replacement
+We can then measure the accuracy of this model using a measure called BLEU score (Papineni et al. 2002), which measures the similarity between the translation generated by the model and a reference translation created by a human (`data/test.en`):
+
+  scripts/multi-bleu.pl data/test.en < models/encdec.en
+
+This gave me a BLEU score of 1.76 for `encdec` and 2.17 for `encatt`, which shows that we're getting something. But generally we need a BLEU score of at least 15 or so to have something remotely readable, so we're going to have to try harder.
+
+## Thresholding Unknown Words
+
+The first problem that we have to tackle is that currently the model has no way of handling unknown words that don't exist in the training data. The most common way of fixing this problem is by replacing some of the words in the training data with a special `<unk>` symbol, which will also be used when we observe an unknown word in the testing data. For example, we can replace all words that appear only once in the training corpus by performing the following commands.
+
+  lamtram/script/unk-single.pl < data/train.en > data/train.unk.en
+  lamtram/script/unk-single.pl < data/train.ja > data/train.unk.ja
+
+Then we can re-train the attentional model using this new data:
+
+	lamtram/src/lamtram/lamtram-train \
+	  --model_type encatt \
+	  --train_src data/train.unk.ja \
+	  --train_trg data/train.unk.en \
+	  --trainer adam \
+	  --learning_rate 0.001 \
+	  --minibatch_size 256 \
+	  --rate_decay 1.0 \
+	  --epochs 10 \
+	  --model_out models/encatt-unk.mod
+
+This greatly helps our accuracy on the test set: when I measured the perplexity and BLEU score on the test set, this gave me TODO and TODO, quite a bit better than before! It also speeds up training quite a bit because it reduces the size of the vocabulary.
 
 ## Using a Development Set
 
+The second problem, over-fitting, can be fixed somewhat by using a development set. The development set is a set of data separate from the training and test sets that we use to measure how well the model is generalizing during training. There are two simple ways to help use this set to prevent overfitting.
+
 ### Early Stopping
+
+TODO
 
 ### Rate Decay
 
-## Minibatching
+## Using an External Lexicon
 
-## Other Update Rules
+### Training the Lexicon
 
-TODO: Adam, etc.
+### Unknown Word Replacement
+
+### Improving Translation Probabilities
 
 ## Changing Network Structure
 
@@ -163,11 +282,17 @@ TODO: Currently using LSTMs. There are also vanilla recurrent networks and GRUs.
 
 ## More Advanced (but very useful!) Methods
 
+### GPUs (Advanced)
+
+If you have access to a machine with a GPU, this can make training much faster, particularly when training NMT systems with large vocabularies or large hidden layer sizes using minibatches. Running lamtram on GPUs is simple, you just need to compile the cnn library using the `CUDA` backend, then link lamtram to it appropriately.
+
 ### Using Subword Units
 
-### Incorporating Discrete Lexicons
+TODO: BPE, other methods
 
 ### Training for Other Evaluation Measures
+
+TODO: minrisk
 
 ## Preparing Data
 
@@ -175,33 +300,37 @@ TODO: Currently using LSTMs. There are also vanilla recurrent networks and GRUs.
 
 Up until now, you have just been working with the small data set of 10,000 that I've provided. Having about 10,000 sentences makes training relatively fast, but having more data will make accuracy significantly higher. Fortunately, there is a larger data set of about 140,000 sentences called `train-big.ja` and `train-big.en`, which you can download by running the following commands.
 
-  TODO
+  wget http://phontron.com/lamtram/download/data-big.tar.gz
+  tar -xzf data-big.tar.gz
 
-Try re-running experiments with this larger data set, and you will see that the accuracy gets significantly higher. In real NMT systems, it's common to use several million sentences (or more!) to achieve usable accuracies.
+Try re-running experiments with this larger data set, and you will see that the accuracy gets significantly higher. In real NMT systems, it's common to use several million sentences (or more!) to achieve usable accuracies. Sometimes in these cases, you'll want to evaluate the accuracy of your system more frequently than when you reach the end of the corpus, so try specifying the `--eval_every NUM_SENTENCES` command, where `NUM_SENTENCES` is the number of sentences after which you'd like to evaluate on the data set.
 
 ### Preprocessing
 
 One thing to note is that up until now, we've taken it for granted that our data is split into words and lower-cased. When you build an actual system, this will not be the case, so you'll have to perform these processes yourself. Here, for tokenization we're using:
 
-* English: [Moses](http://) (TODO et al.)
+* English: [Moses](http://) (Koehn et al. 2008)
 * Japanese: [KyTea](http://phontron.com/kytea/) (Neubig et al. 2011)
 
 And for lowercasing we're using:
 
   perl -nle 'print lc'
 
-Make sure that you do tokenization, and potentially lowercasing, before feeding your data into lamtram, or any MT toolkit. You can see an example of how we converted the Tanaka Corpus into the data used for the tutorial by looking at `data/create-data.sh` script.
+Make sure that you do tokenization, and potentially lowercasing, before feeding your data into lamtram, or any MT toolkit. You can see an example of how we converted the Tanaka Corpus into the data used for the tutorial by looking at `scripts/create-data.sh` script.
 
 ## Final Word
 
-Now, you know a few practical things about making an accurate neural MT system. This is a very fast-moving field, so this guide might be obsolete in a few months from the writing (or even already!) but hopefully this helped build the basics.
+Now, you know a few practical things about making an accurate neural MT system. This is a very fast-moving field, so this guide might be obsolete in a few months from the writing (or even already!) but hopefully this helped you learn the basics to get started, start reading papers, and come up with your own methods/applications.
 
 ## References
 
 * Brown et al. 1992
+* Koehn et al. 2008
 * Koehn 2010
+* Kingma et al. 2012
 * Neubig et al. 2011
 * Kalchbrenner & Blunsom 2013
 * Sutskever et al. 2014
-* Goldberg 2015
 * Bahdanau et al. 2015
+* Luong et al. 2015
+* Goldberg 2015
