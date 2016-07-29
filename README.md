@@ -401,10 +401,10 @@ However, there is also something concerning about the previous result. "ratio=" 
 
 There are a number of ways to fix this problem, but the easiest is adding a "word penalty" `wp` which multiplies the probability of the sentence by the constant "e^{wp}" every time an additional word is added. This is equivalent to setting a prior probability on the length of the sentence that follows an exponential distribution. `wp` can be set using the `--word_pen` option of lamtram, so let's try setting a few different values and measure the BLEU score for beam width of 10:
 
-  wp=0.0: BLEU = 9.73, 51.7/19.2/8.5/3.8 (BP=0.726, ratio=0.758, hyp_len=3553, ref_len=4690)
-  wp=0.5: BLEU = 9.90, 50.5/18.6/8.0/3.5 (BP=0.775, ratio=0.797, hyp_len=3736, ref_len=4690)
-  wp=1.0: BLEU = 10.00, 48.3/17.9/7.5/3.0 (BP=0.850, ratio=0.860, hyp_len=4033, ref_len=4690)
-  wp=1.5: BLEU = 9.95, 44.1/16.1/6.5/2.5 (BP=0.963, ratio=0.963, hyp_len=4518, ref_len=4690)
+    wp=0.0: BLEU = 9.73, 51.7/19.2/8.5/3.8 (BP=0.726, ratio=0.758, hyp_len=3553, ref_len=4690)
+    wp=0.5: BLEU = 9.90, 50.5/18.6/8.0/3.5 (BP=0.775, ratio=0.797, hyp_len=3736, ref_len=4690)
+    wp=1.0: BLEU = 10.00, 48.3/17.9/7.5/3.0 (BP=0.850, ratio=0.860, hyp_len=4033, ref_len=4690)
+    wp=1.5: BLEU = 9.95, 44.1/16.1/6.5/2.5 (BP=0.963, ratio=0.963, hyp_len=4518, ref_len=4690)
 
 We can see that as we increase the word penalty, this gives us more reasonably-lengthed hypotheses, which also improves the BLEU a little bit.
 
@@ -544,7 +544,7 @@ Also note that up until now, we've taken it for granted that our data is split i
 
 And for lowercasing we're using:
 
-  perl -nle 'print lc'
+    perl -nle 'print lc'
 
 Make sure that you do tokenization, and potentially lowercasing, before feeding your data into lamtram, or any MT toolkit. You can see an example of how we converted the Tanaka Corpus into the data used for the tutorial by looking at `scripts/create-data.sh` script.
 
