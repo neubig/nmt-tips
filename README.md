@@ -4,7 +4,7 @@ by [Graham Neubig](http://phontron.com) (Nara Institute of Science and Technolog
 
 This tutorial will explain some practical tips about how to train a neural machine translation system. It is partly based around examples using the [lamtram](http://github.com/neubig/lamtram) toolkit. Note that this will not cover the theory behind NMT in detail, nor is it a survey meant to cover all the work on neural MT, but it will show you how to use lamtram, and also demonstrate some things that you have to do in order to make a system that actually works well (focusing on ones that are implemented in my toolkit).
 
-This tutorial will assume that you have already installed lamtram (and the [cnn](http://github.com/clab/cnn) backend library that it depends on). Then, use git to pull this tutorial and the corresponding data.
+This tutorial will assume that you have already installed lamtram (and the [cnn](http://github.com/clab/cnn) backend library that it depends on) on Linux or Mac. Then, use git to pull this tutorial and the corresponding data.
 
     git clone http://github.com/neubig/nmt-tips
 
@@ -34,9 +34,11 @@ First, we *encode* the source sentence. To do so, we convert the source word int
 
     wf_j = WORDREP(f_j; Φ_fwr)
 
-Then,  we map this into a hidden state using a recurrent neural network, parameterized by `Φ_frnn`. (We assume `h_0` is a zero vector.)
+Then,  we map this into a hidden state using a recurrent neural network, parameterized by `Φ_frnn`. We assume `h_0` is a zero vector.
 
     h_j = RNN(h_{j-1}, wf_j; Φ_frnn)
+
+It is also common to generate `h_j` using bidirectional neural networks, where we run one forward RNN that reads from left-to-right, and another backward RNN that reads from right to left, then concatenate the representations for each word. This is the default setting in lamtram (specified by `--encoder_types "for|rev"`).
 
 Next, we *decode* to generate the target sentence, one word at a time. This is done by initializing the first hidden state of the decoder `g_0` to be equal to the last hidden state of the encoder: `g_0 = h_J`. Next, we generate a word in the output by performing a softmax over the target vocabulary to predict the probability of each word in the output, parameterized by `Φ_esm`:
 
@@ -157,15 +159,29 @@ Try re-running the following command:
       --epochs 10 \
       --model_out models/encdec.mod
 
-You'll probably find that the perplexity drops significantly faster than when using the standard SGD update (after the first iteration, I had a perplexity of 287 with standard SGD, and 233 with Adam).
+You'll probably find that the perplexity drops significantly faster than when using the standard SGD update (after the first epoch, I had a perplexity of 287 with standard SGD, and 233 with Adam).
+
+### GPUs (Advanced)
+
+If you have access to a machine with a GPU, this can make training much faster, particularly when training NMT systems with large vocabularies or large hidden layer sizes using minibatches. Running lamtram on GPUs is simple, you just need to compile the cnn library using the `CUDA` backend, then link lamtram to it appropriately. However, in our case here we are using a small network and small training set, so training on CPU is sufficient for now.
 
 ## Attention
 
 ### Basic Concept
 
-One of the major advances in NMT has been the introduction of attention (Bahdanau et al. 2015). The basic idea behind attention is that when we want to generate a particular target word `e_i`, that we will want to focus on a particular source word `f_j`, or a couple words. In order to express this, attention calculates a "context vector" `c_i` that 
+One of the major advances in NMT has been the introduction of attention (Bahdanau et al. 2015). The basic idea behind attention is that when we want to generate a particular target word `e_i`, that we will want to focus on a particular source word `f_j`, or a couple words. In order to express this, attention calculates a "context vector" `c_i` that is used as input to the softmax in addition to the decoder state:
+ 
+    pe_i = SOFTMAX([g_{i-1}, c_i]; Φ_esm)
 
-TODO: Make this explanation more complete.
+This context vector is defined as the sum of the input sequence vectors `h_j`, weighted by an attention vector `a_i` as follows:
+
+    c_i = Σ_j a_{i,j} h_j
+
+There are a number of ways to calculate the attention vector `a_i` (described in detail below), but all follow a basic pattern of calculating an attention score `α_{i,j}` for every word that is a function of `g_i` and `h_j`:
+
+    α_{i,j} = ATTENTION(g_i, h_j; Φ_attn)
+
+and then use a softmax function to convert score vector `α_i` into an attention vector `a_i` that adds to one.
 
 If you want to try to train an attentional model with lamtram, just change all mentions of `encdec` above to `encatt` (for encoder/attentional), and an attentional model will be trained for you. For example, we can run the following command:
 
@@ -184,11 +200,11 @@ If you compare the perplexities between these two methods you may see some diffe
 
 ### Types of Attention (Advanced)
 
-There are several ways to calculate the attention values `a_{i,j}`, such as those investigated by Luong et al. (2015). The following ones are implemented in lamtram, and can be changed using the `--attention_type TYPE` option as noted below.
+There are several ways to calculate the attention scores `α_{i,j}`, such as those investigated by Luong et al. (2015). The following ones are implemented in lamtram, and can be changed using the `--attention_type TYPE` option as noted below.
 
-* Dot Product: Calculate the dot product `a_{i,j} = g_i * transpose(wf_j)` (`--attention_type dot`).
-* Bilinear: A bilinear model that puts a parameterized transform `Φ_bilin` between the two vectors `a_{i,j} = g_i * Φ_bilin * transpose(wf_j)` (`--attention_type bilin`).
-* Multi-layer Perceptron: Input the two vectors into a multi-layer perceptron with a hidden layer of size `LAYERNODES`, `a_{i,j} = MLP([g_i, wf_j]; Φ_mlp)` (`--attention_type mlp:LAYERNODES`)
+* Dot Product: Calculate the dot product `α_{i,j} = g_i * transpose(wf_j)` (`--attention_type dot`).
+* Bilinear: A bilinear model that puts a parameterized transform `Φ_bilin` between the two vectors `α_{i,j} = g_i * Φ_bilin * transpose(wf_j)` (`--attention_type bilin`).
+* Multi-layer Perceptron: Input the two vectors into a multi-layer perceptron with a hidden layer of size `LAYERNODES`, `α_{i,j} = MLP([g_i, wf_j]; Φ_mlp)` (`--attention_type mlp:LAYERNODES`)
 
 In practice, I've found that dot product tends to work pretty well, and because of this it's the default setting in lamtram. However, the multi-layer perceptron also performs well in some cases, so sometimes it's worth trying.
 
@@ -214,7 +230,7 @@ Next, let's try to actually generate translations of the input using the followi
       --operation gen \
       --models_in encdec=models/encdec.mod \
       --src_in data/test.ja \
-      < data/test.en > models/encdec.en
+      > models/encdec.en
 
 We can then measure the accuracy of this model using a measure called BLEU score (Papineni et al. 2002), which measures the similarity between the translation generated by the model and a reference translation created by a human (`data/test.en`):
 
@@ -321,7 +337,7 @@ This can be done in lamtram by specifying the `map_in` function during decoding:
       --models_in encatt=models/encatt-unk-stop.mod \
       --src_in data/test.ja \
       --map_in lexicon/train.jaen.prob \
-      < data/test.en > models/encatt-unk-stop-rep.en
+      > models/encatt-unk-stop-rep.en
 
 This helped a little bit, raising the BLEU score from 2.58 to 2.63 for my model.
 
@@ -349,31 +365,77 @@ This method can be applied by adding the `attention_lex` options as follows. "al
       --epochs 10 \
       --model_out models/encatt-unk-stop-lex.mod
 
-In my running, this iproves our perplexity from 57 to 37, and BLEU score from 2.48 to 8.83, nice!
-
-## Changing Network Structure
-
-### Network Size
-
-TODO: Width, depth.
-
-### Type of Recurrence
-
-TODO: Currently using LSTMs. There are also vanilla recurrent networks and GRUs.
+In my running, this improves our perplexity from 57 to 37, and BLEU score from 2.48 to 8.83, nice!
 
 ## Search
 
 ### Beam Search
 
+In the initial explanation of NMT, I explained that translations are generated by selecting the next word in the target sentence that maximizes the probability `pe_i`. However, while this gives us a locally optimal decision about the next word `e'_i`, this is a greedy search method that won't necessarily give us the sentence `E'` that maximizes the translation probability `P(E|F)`.
+
+To improve search (and hopefully translation accuracy), we can us "beam search," which instead of considering the one best next word, considers the `k` best hypotheses at every time step `i`. If `k` is bigger, search will be more accurate but slower. `k` can be set with the `--beam` option during decoding, so let's try this here with our best model so far:
+
+    lamtram/src/lamtram/lamtram \
+      --operation gen \
+      --models_in encatt=models/encatt-unk-stop-lex.mod \
+      --src_in data/test.ja \
+      --map_in lexicon/train.jaen.prob \
+      --beam BEAM \
+      > models/encatt-unk-stop-lex-beamBEAM.en
+
+where we replace the two instances of `BEAM` above with values such as 1, 2, 3, 5.
+
+Looking at the results
+
+    BEAM=1:  BLEU = 8.83, 42.2/14.3/5.5/2.1 (BP=0.973, ratio=0.973, hyp_len=4564, ref_len=4690)
+    BEAM=2:  BLEU = 9.23, 45.4/16.2/6.4/2.5 (BP=0.887, ratio=0.893, hyp_len=4186, ref_len=4690)
+    BEAM=3:  BLEU = 9.66, 49.4/18.0/7.5/3.1 (BP=0.805, ratio=0.822, hyp_len=3855, ref_len=4690)
+    BEAM=5:  BLEU = 9.66, 50.7/18.7/8.0/3.4 (BP=0.765, ratio=0.788, hyp_len=3698, ref_len=4690)
+    BEAM=10: BLEU = 9.73, 51.7/19.2/8.5/3.8 (BP=0.726, ratio=0.758, hyp_len=3553, ref_len=4690)
+
+we can see that by increasing the beam size, we can get a decent improvement in BLEU.
+
 ### Adjusting for Sentence Length
+
+However, there is also something concerning about the previous result. "ratio=" is the ratio of "output length"/"reference length" and if this is less than 1, our sentences are too short. We can see that as we increase the beam size, our sentences are getting to be much shorter that the reference. The reason for this is that as sentences get longer, their probability tends to get lower, and when we increase the beam size we become more effective at finding these shorter sentences.
+
+There are a number of ways to fix this problem, but the easiest is adding a "word penalty" `wp` which multiplies the probability of the sentence by the constant "e^{wp}" every time an additional word is added. This is equivalent to setting a prior probability on the length of the sentence that follows an exponential distribution. `wp` can be set using the `--word_pen` option of lamtram, so let's try setting a few different values and measure the BLEU score for beam width of 10:
+
+  wp=0.0: BLEU = 9.73, 51.7/19.2/8.5/3.8 (BP=0.726, ratio=0.758, hyp_len=3553, ref_len=4690)
+  wp=0.5: BLEU = 9.90, 50.5/18.6/8.0/3.5 (BP=0.775, ratio=0.797, hyp_len=3736, ref_len=4690)
+  wp=1.0: BLEU = 10.00, 48.3/17.9/7.5/3.0 (BP=0.850, ratio=0.860, hyp_len=4033, ref_len=4690)
+  wp=1.5: BLEU = 9.95, 44.1/16.1/6.5/2.5 (BP=0.963, ratio=0.963, hyp_len=4518, ref_len=4690)
+
+We can see that as we increase the word penalty, this gives us more reasonably-lengthed hypotheses, which also improves the BLEU a little bit.
+
+## Changing Network Structure
+
+One thing that we have not considered so far is the size of the network that we're training. Currently the default for lamtram is that all recurrent networks have 100 hidden nodes (or when using forward/backward encoders, the encoders will be 50 and decoder will be 100). In addition, we're using only a single hidden layer, while many recent systems use deeper networks with 2-4 hidden layers. These can be changed using the `--layers` option of lamtram, which defaults to "lstm:100:1", where the first option is using LSTM networks (which tend to work pretty well), the second option is the width, and third option is the depth. Let's try to train a wider network by setting `--layers lstm:200:1`:
+
+    lamtram/src/lamtram/lamtram-train \
+      --model_type encatt \
+      --train_src data/train.unk.ja \
+      --train_trg data/train.unk.en \
+      --dev_src data/dev.ja \
+      --dev_trg data/dev.en \
+      --attention_lex prior:file=lexicon/train.jaen.prob:alpha=0.0001 \
+      --layers lstm:200:1 \
+      --trainer adam \
+      --learning_rate 0.001 \
+      --minibatch_size 256 \
+      --rate_decay 1.0 \
+      --epochs 10 \
+      --model_out models/encatt-unk-stop-lex-w200.mod
+
+Note that this makes training significantly slower, because we need to do twice as many calculations in many of our matrix multiplications.
 
 ## Ensembling
 
 ## More Advanced (but very useful!) Methods
 
-### GPUs (Advanced)
+### Dropout
 
-If you have access to a machine with a GPU, this can make training much faster, particularly when training NMT systems with large vocabularies or large hidden layer sizes using minibatches. Running lamtram on GPUs is simple, you just need to compile the cnn library using the `CUDA` backend, then link lamtram to it appropriately.
+TODO: Dropout
 
 ### Using Subword Units
 
@@ -392,11 +454,11 @@ Up until now, you have just been working with the small data set of 10,000 that 
   wget http://phontron.com/lamtram/download/data-big.tar.gz
   tar -xzf data-big.tar.gz
 
-Try re-running experiments with this larger data set, and you will see that the accuracy gets significantly higher. In real NMT systems, it's common to use several million sentences (or more!) to achieve usable accuracies. Sometimes in these cases, you'll want to evaluate the accuracy of your system more frequently than when you reach the end of the corpus, so try specifying the `--eval_every NUM_SENTENCES` command, where `NUM_SENTENCES` is the number of sentences after which you'd like to evaluate on the data set.
+Try re-running experiments with this larger data set, and you will see that the accuracy gets significantly higher. In real NMT systems, it's common to use several million sentences (or more!) to achieve usable accuracies. Sometimes in these cases, you'll want to evaluate the accuracy of your system more frequently than when you reach the end of the corpus, so try specifying the `--eval_every NUM_SENTENCES` command, where `NUM_SENTENCES` is the number of sentences after which you'd like to evaluate on the data set. Also, it's highly recommended that you use a GPU for training when scaling to larger data and networks.
 
 ### Preprocessing
 
-One thing to note is that up until now, we've taken it for granted that our data is split into words and lower-cased. When you build an actual system, this will not be the case, so you'll have to perform these processes yourself. Here, for tokenization we're using:
+Also note that up until now, we've taken it for granted that our data is split into words and lower-cased. When you build an actual system, this will not be the case, so you'll have to perform these processes yourself. Here, for tokenization we're using:
 
 * English: [Moses](http://) (Koehn et al. 2008)
 * Japanese: [KyTea](http://phontron.com/kytea/) (Neubig et al. 2011)
