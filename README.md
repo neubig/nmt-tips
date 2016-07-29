@@ -20,9 +20,9 @@ and make a link to the directory in which you installed lamtram:
 
 Machine translation is a method for translating from a source sequence `F` with words `f_1, ..., f_J` to a target sequence `E` with words `e_1, ..., e_I`. This usually means that we translate between a sentence in a source language (e.g. Japanese) to a sentence in a target language (e.g. English). Machine translation can be used for other applications as well.
 
-In recent years, the most prominent method is Statistical Machine Translation (SMT; Brown et al. (1992)), which builds a probabilistic model of the target sequence given the source sequence `P(E|F)`. This probabilistic model is trained using a large set of training data containing pairs of source and target sequences.
+In recent years, the most prominent method is Statistical Machine Translation (SMT; Brown et al. (1993)), which builds a probabilistic model of the target sequence given the source sequence `P(E|F)`. This probabilistic model is trained using a large set of training data containing pairs of source and target sequences.
 
-A good resource on machine translation in general, including a number of more traditional (non-Neural) methods is Koehn (2010)'s book "Statistical Machine Translation".
+A good resource on machine translation in general, including a number of more traditional (non-Neural) methods is Koehn (2009)'s book "Statistical Machine Translation".
 
 ## Neural Machine Translation (NMT) and Encoder-decoder Models
 
@@ -144,7 +144,7 @@ Looking at the `w/s` (words per second) on the right side of the log, we can see
 
 ### Other Update Rules
 
-In addition to the standard `SGD_UPDATE` rule listed above, there are a myriad of additional ways to update the parameters, including "SGD With Momentum", "Adagrad", "Adadelta", "RMSProp", "Adam", and many others. Explaining these in detail is beyond the scope of this tutorial, but it suffices to say that these will more quickly find a good place in parameter space than the standard method above. My current favorite optimization method is "Adam" (Kingma et al. 2012), which can be run by setting `--trainer adam`. We'll also have to change the initial learning rate to `--learning_rate 0.001`, as a learning rate of 0.1 is too big when using Adam.
+In addition to the standard `SGD_UPDATE` rule listed above, there are a myriad of additional ways to update the parameters, including "SGD With Momentum", "Adagrad", "Adadelta", "RMSProp", "Adam", and many others. Explaining these in detail is beyond the scope of this tutorial, but it suffices to say that these will more quickly find a good place in parameter space than the standard method above. My current favorite optimization method is "Adam" (Kingma et al. 2014), which can be run by setting `--trainer adam`. We'll also have to change the initial learning rate to `--learning_rate 0.001`, as a learning rate of 0.1 is too big when using Adam.
 
 Try re-running the following command:
 
@@ -410,9 +410,12 @@ We can see that as we increase the word penalty, this gives us more reasonably-l
 
 ## Changing Network Structure
 
-One thing that we have not considered so far is the size of the network that we're training. Currently the default for lamtram is that all recurrent networks have 100 hidden nodes (or when using forward/backward encoders, the encoders will be 50 and decoder will be 100). In addition, we're using only a single hidden layer, while many recent systems use deeper networks with 2-4 hidden layers. These can be changed using the `--layers` option of lamtram, which defaults to "lstm:100:1", where the first option is using LSTM networks (which tend to work pretty well), the second option is the width, and third option is the depth. Let's try to train a wider network by setting `--layers lstm:200:1`:
+One thing that we have not considered so far is the size of the network that we're training. Currently the default for lamtram is that all recurrent networks have 100 hidden nodes (or when using forward/backward encoders, the encoders will be 50 and decoder will be 100). In addition, we're using only a single hidden layer, while many recent systems use deeper networks with 2-4 hidden layers. These can be changed using the `--layers` option of lamtram, which defaults to "lstm:100:1", where the first option is using LSTM networks (which tend to work pretty well), the second option is the width, and third option is the depth. Let's try to train a wider network by setting `--layers lstm:200:1`.
+
+One thing to note is that the cnn toolkit has a default limit of using 512MB of memory, but once we start using larger networks this might not be sufficient. So we'll also increase the amount of memory to 1024MB by adding the `--cnn_mem 1024` parameter.
 
     lamtram/src/lamtram/lamtram-train \
+      --cnn_mem 1024 \
       --model_type encatt \
       --train_src data/train.unk.ja \
       --train_trg data/train.unk.en \
@@ -427,23 +430,99 @@ One thing that we have not considered so far is the size of the network that we'
       --epochs 10 \
       --model_out models/encatt-unk-stop-lex-w200.mod
 
-Note that this makes training significantly slower, because we need to do twice as many calculations in many of our matrix multiplications.
+Note that this makes training significantly slower, because we need to do twice as many calculations in many of our matrix multiplications. Testing this model, the model with 200 nodes reduces perplexity from 37 to 33, and improves BLEU from 10.00 to 10.21. When using larger training data we'll get even bigger improvements by making the network bigger.
 
 ## Ensembling
 
+One final technique that is useful for improving final results is "ensembling," or combining multiple models together. The way this works is that if we have two probability distributions `pe_i^{(1)}` and `pe_i^{(2)}` from multiple models, we can calculate the next probability by linearly interpolating them together:
+
+    pe_i = (pe_i^{(1)} + pe_i^{(2)}) / 2
+
+or log-linearly interpolating them together:
+
+    pe_i = exp( (log(pe_i^{(1)}) + log(pe_i^{(2)})) / 2 )
+
+Performing ensembling at test time in lamtram is simple: in `--models_in`, we simply add two different model options separated by a pipe, as follows. The default is linear interpolation, but you can also try log-linear interpolation by setting `--ensemble_op logsum`. Let's try ensembling our 100-node and 200-node models to measure perplexity:
+
+    lamtram/src/lamtram/lamtram \
+      --operation ppl \
+      --models_in "encatt=models/encatt-unk-stop-lex.mod|encatt=models/encatt-unk-stop-lex-w200.mod" \
+      --src_in data/test.ja \
+      < data/test.en
+
+This reduced the perplexity from 36/33 to 30 for the ensembled model, and resulted in a BLEU score of 10.99. Of course, we can probably improve this by ensembling even more models together. It's actually OK to just train several models of the same structure with different random seeds (if you set the `--seed` parameter of lamtram you can set a different seed, or by default a different one will be chosen randomly every time).
+
+## Final Output
+
+Because we're basically done, I'll also list up a few examples from the start of the test corpus, where the first line is the input, the second line is the correct translation, and the third line is generated translation.
+
+    君 は １ 日 で それ が でき ま す か 。
+    can you do it in one day ?
+    you can do it on a day ?
+    
+    皮肉 な 笑い を 浮かべ て 彼 は 私 を 見つめ た 。
+    he stared at me with a satirical smile .
+    he stared at the irony of irony .
+    
+    私 たち の 出発 の 時間 が 差し迫 っ て い る 。
+    it &apos;s time to leave .
+    our start of our start is we .
+    
+    あなた は 午後 何 を し た い で す か 。
+    what do you want to do in the afternoon ?
+    what did you do for you this afternoon ?
+
+Not bad, but actually pretty good considering that we only have 10,000 sentences of training data, and that Japanese-English is a pretty difficult language pair to translate!
+
 ## More Advanced (but very useful!) Methods
 
-### Dropout
+The following are a few extra methods that can be pretty useful in some cases, but I won't be testing here:
 
-TODO: Dropout
+### Regularization
+
+As mentioned before, when dealing with small data we need to worry about overfitting, and some ways to fix this are ealy stopping and learning rate decay. In addition, we can also reduce the damage of overfitting by adding some variety of regularization.
+
+One common way of regularizing neural networks is "dropout" (Srivastava et al. 2014) which consists of randomly disabling a set fraction of the units in the input network. This dropout rate can be set with the `--dropout RATE` option. Usually we use a rate of 0.5, which has nice theoretical properties. I tried this on this data set, and it reduced perplexity from 33 to 30 for the 200 node model, but didn't have a large effect on BLEU scores.
+
+Another way to do this is using L2 regularization, which puts a penalty on the L2 norm of the parameter vectors in the model. This can be applied by adding `--cnn_l2 RATE` to the beginning of the option list. I've personally had little luck with getting this to work for neural networks, but it might be worth trying.
 
 ### Using Subword Units
 
-TODO: BPE, other methods
+One problem with neural network models is that as the vocabulary gets larger, training time increases, so it's often necessary to replace many of the words in the vocabulary with `<unk>` to ensure that training times remain reasonable. There are a number of ways that have been proposed to handle the problem of large vocabularies. One simple way to do so without sacrificing accuracy on low-frequency words (too much) is by splitting rare words into subword units. A method to do so by Sennrich et al. (2016) discovers good subword units using a method called "byte pair encoding", and is implemented in the [subword-nmt](http://github.com/rsennrich/subword-nmt) package. You can use this as an additional pre-processing/post-processing step before learning and using a model with lamtram.
 
 ### Training for Other Evaluation Measures
 
-TODO: minrisk
+Finally, you may have noticed throughout this tutorial that we are training models to maximize the likelihood, but evaluating our models using BLEU score. There are a number of methods to resolve this mismatch between the training and testing criteria by directly optimizing NMT systems to improve translation accuracy. In lamtram, a method by Shen et al. (2016) can be used to optimize NMT systems for expected BLEU score (or in other words, minimize the risk). In particular, I've found that this does a good job of at least ensuring that the NMT system generates output that is of the appropriate length.
+
+There are a number settings that should be changed when using the method:
+
+* `--learning_criterion minrisk`: This will enable minimum-risk based training.
+* `--model_in FILE`: Because this method is slow to train, it's better to first initialize the model using standard maximimum likelihood training, then fine-tune the model with BLEU-based training. This method can be used to read in an already-trained model.
+* `--minrisk_num_samples NUM`: This method works by generating samples from the model, then evaluating these generated samples. Increasing NUM improves the stability of the training, but also reduces the training efficiency. A value 20-100 should be reasonable.
+* `--minrisk_scaling`, `--minrisk_dedup`: Parameters of the algorithm including the scaling factors for probabilities, and whether to include the correct answer in the samples or not.
+* `--trainer sgd --learning_rate 0.05`: I've found that using more advanced optimizers like Adam actually reduces stability in training, so using vanilla SGD might be a safer choice. Slightly lowering the learning rate is also sometimes necessary.
+* `--eval_every 1000`: Training is a bit slower than standard NMT training, so we can evaluate more frequently than when we finish the whole corpus.
+
+The final command will look like this:
+
+    lamtram/src/lamtram/lamtram-train \
+      --cnn_mem 1024 \
+      --model_type encatt \
+      --train_src data/train.unk.ja \
+      --train_trg data/train.unk.en \
+      --dev_src data/dev.ja \
+      --dev_trg data/dev.en \
+      --trainer sgd \
+      --learning_criterion minrisk \
+      --learning_rate 0.05 \
+      --minrisk_num_samples 20 \
+      --minrisk_scaling 0.005 \
+      --minrisk_include_ref true \
+      --rate_decay 1.0 \
+      --epochs 10 \
+      --eval_every 1000 \
+      --model_in models/encatt-unk-stop-lex-w200.mod \
+      --model_out models/encatt-unk-stop-lex-w200-minrisk.mod
 
 ## Preparing Data
 
@@ -451,8 +530,8 @@ TODO: minrisk
 
 Up until now, you have just been working with the small data set of 10,000 that I've provided. Having about 10,000 sentences makes training relatively fast, but having more data will make accuracy significantly higher. Fortunately, there is a larger data set of about 140,000 sentences called `train-big.ja` and `train-big.en`, which you can download by running the following commands.
 
-  wget http://phontron.com/lamtram/download/data-big.tar.gz
-  tar -xzf data-big.tar.gz
+    wget http://phontron.com/lamtram/download/data-big.tar.gz
+    tar -xzf data-big.tar.gz
 
 Try re-running experiments with this larger data set, and you will see that the accuracy gets significantly higher. In real NMT systems, it's common to use several million sentences (or more!) to achieve usable accuracies. Sometimes in these cases, you'll want to evaluate the accuracy of your system more frequently than when you reach the end of the corpus, so try specifying the `--eval_every NUM_SENTENCES` command, where `NUM_SENTENCES` is the number of sentences after which you'd like to evaluate on the data set. Also, it's highly recommended that you use a GPU for training when scaling to larger data and networks.
 
@@ -460,7 +539,7 @@ Try re-running experiments with this larger data set, and you will see that the 
 
 Also note that up until now, we've taken it for granted that our data is split into words and lower-cased. When you build an actual system, this will not be the case, so you'll have to perform these processes yourself. Here, for tokenization we're using:
 
-* English: [Moses](http://) (Koehn et al. 2008)
+* English: [Moses](http://statmt.org/moses) (Koehn et al. 2007)
 * Japanese: [KyTea](http://phontron.com/kytea/) (Neubig et al. 2011)
 
 And for lowercasing we're using:
@@ -471,18 +550,23 @@ Make sure that you do tokenization, and potentially lowercasing, before feeding 
 
 ## Final Word
 
-Now, you know a few practical things about making an accurate neural MT system. This is a very fast-moving field, so this guide might be obsolete in a few months from the writing (or even already!) but hopefully this helped you learn the basics to get started, start reading papers, and come up with your own methods/applications.
+Now, you know a few practical things about making an accurate neural MT system. Using the methods described here, we were able to improve a system trained on only 10,000 sentences from 1.83 BLEU to 10.99 BLEU. Switching over to larger data should result in much larger increases, and may even result in readable translations.
+
+This is a very fast-moving field, so this guide might be obsolete in a few months from the writing (or even already!) but hopefully this helped you learn the basics to get started, start reading papers, and come up with your own methods/applications.
 
 ## References
 
-* Brown et al. 1992
-* Koehn et al. 2008
-* Koehn 2010
-* Kingma et al. 2012
-* Neubig et al. 2011
-* Kalchbrenner & Blunsom 2013
-* Sutskever et al. 2014
-* Bahdanau et al. 2015
-* Luong et al. 2015
-* Goldberg 2015
-* Arthur et al. 2016
+* Philip Arthur, Graham Neubig, Satoshi Nakamura. Incorporating Discreet Translation Lexicons in Neural Machine Translation. ArXiv, 2016
+* Dzmitry Bahdanau, Kyunghyun Cho, Yoshua Bengio. Neural Machine Translation by Jointly Learning to Align and Translate. ICLR, 2015.
+* Peter F. Brown, Vincent J. Della Pietra, Stephen A. Della Pietra, Robert L. Mercer. The mathematics of statistical machine translation: Parameter estimation. Computational Linguistics, 1993.
+* Yoav Goldberg. A primer on neural network models for natural language processing. ArXiv, 2015.
+* Nal Kalchbrenner, Phil Blunsom. Recurrent Continuous Translation Models. EMNLP, 2013.
+* Diederik Kingma, Jimmy Ba. Adam: A method for stochastic optimization. ArXiv, 2014.
+* Philipp Koehn et al. Moses: Open source toolkit for statistical machine translation. ACL, 2007.
+* Philipp Koehn. Statistical machine translation. Cambridge University Press, 2009.
+* Minh-Thang Luong, Hieu Pham, Christopher D. Manning. Effective approaches to attention-based neural machine translation. EMNLP, 2015.
+* Graham Neubig, Yosuke Nakata, Shinsuke Mori. Pointwise prediction for robust, adaptable Japanese morphological analysis. ACL, 2011.
+* Rico Sennrich, Barry Haddow, Alexandra Birch. Neural machine translation of rare words with subword units. ACL, 2016.
+* Nitish Srivastava, Geoffrey E. Hinton, Alex Krizhevsky, Ilya Sutskever, Ruslan R. Salakhutdinov. Dropout: A simple way to prevent neural networks from overfitting. JMLR, 2014.
+* Shiqi Shen, Yong Cheng, Zhongjun He, Wei He, Hua Wu, Maosong Sun, Yang Liu. Minimum risk training for neural machine translation. ACL, 2016.
+* Ilya Sutskever, Oriol Vinyals, Quoc V. Le. Sequence to sequence learning with neural networks. NIPS, 2014.
