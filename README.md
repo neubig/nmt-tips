@@ -556,7 +556,7 @@ This is a very fast-moving field, so this guide might be obsolete in a few month
 
 ## References
 
-* Philip Arthur, Graham Neubig, Satoshi Nakamura. Incorporating Discreet Translation Lexicons in Neural Machine Translation. ArXiv, 2016
+* Philip Arthur, Graham Neubig, Satoshi Nakamura. Incorporating Discrete Translation Lexicons in Neural Machine Translation. EMNLP, 2016
 * Dzmitry Bahdanau, Kyunghyun Cho, Yoshua Bengio. Neural Machine Translation by Jointly Learning to Align and Translate. ICLR, 2015.
 * Peter F. Brown, Vincent J. Della Pietra, Stephen A. Della Pietra, Robert L. Mercer. The mathematics of statistical machine translation: Parameter estimation. Computational Linguistics, 1993.
 * Yoav Goldberg. A primer on neural network models for natural language processing. ArXiv, 2015.
