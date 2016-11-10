@@ -4,7 +4,7 @@ by [Graham Neubig](http://phontron.com) (Nara Institute of Science and Technolog
 
 This tutorial will explain some practical tips about how to train a neural machine translation system. It is partly based around examples using the [lamtram](http://github.com/neubig/lamtram) toolkit. Note that this will not cover the theory behind NMT in detail, nor is it a survey meant to cover all the work on neural MT, but it will show you how to use lamtram, and also demonstrate some things that you have to do in order to make a system that actually works well (focusing on ones that are implemented in my toolkit).
 
-This tutorial will assume that you have already installed lamtram (and the [cnn](http://github.com/clab/cnn) backend library that it depends on) on Linux or Mac. Then, use git to pull this tutorial and the corresponding data.
+This tutorial will assume that you have already installed lamtram (and the [DyNet](http://github.com/clab/dynet) backend library that it depends on) on Linux or Mac. Then, use git to pull this tutorial and the corresponding data.
 
     git clone http://github.com/neubig/nmt-tips
 
@@ -163,7 +163,7 @@ You'll probably find that the perplexity drops significantly faster than when us
 
 ### GPUs (Advanced)
 
-If you have access to a machine with a GPU, this can make training much faster, particularly when training NMT systems with large vocabularies or large hidden layer sizes using minibatches. Running lamtram on GPUs is simple, you just need to compile the cnn library using the `CUDA` backend, then link lamtram to it appropriately. However, in our case here we are using a small network and small training set, so training on CPU is sufficient for now.
+If you have access to a machine with a GPU, this can make training much faster, particularly when training NMT systems with large vocabularies or large hidden layer sizes using minibatches. Running lamtram on GPUs is simple, you just need to compile the DyNet library using the `CUDA` backend, then link lamtram to it appropriately. However, in our case here we are using a small network and small training set, so training on CPU is sufficient for now.
 
 ## Attention
 
@@ -412,10 +412,10 @@ We can see that as we increase the word penalty, this gives us more reasonably-l
 
 One thing that we have not considered so far is the size of the network that we're training. Currently the default for lamtram is that all recurrent networks have 100 hidden nodes (or when using forward/backward encoders, the encoders will be 50 and decoder will be 100). In addition, we're using only a single hidden layer, while many recent systems use deeper networks with 2-4 hidden layers. These can be changed using the `--layers` option of lamtram, which defaults to `lstm:100:1`, where the first option is using LSTM networks (which tend to work pretty well), the second option is the width, and third option is the depth. Let's try to train a wider network by setting `--layers lstm:200:1`.
 
-One thing to note is that the cnn toolkit has a default limit of using 512MB of memory, but once we start using larger networks this might not be sufficient. So we'll also increase the amount of memory to 1024MB by adding the `--cnn_mem 1024` parameter.
+One thing to note is that the DyNet toolkit has a default limit of using 512MB of memory, but once we start using larger networks this might not be sufficient. So we'll also increase the amount of memory to 1024MB by adding the `--dynet_mem 1024` parameter.
 
     lamtram/src/lamtram/lamtram-train \
-      --cnn_mem 1024 \
+      --dynet_mem 1024 \
       --model_type encatt \
       --train_src data/train.unk.ja \
       --train_trg data/train.unk.en \
@@ -484,7 +484,7 @@ As mentioned before, when dealing with small data we need to worry about overfit
 
 One common way of regularizing neural networks is "dropout" (Srivastava et al. 2014) which consists of randomly disabling a set fraction of the units in the input network. This dropout rate can be set with the `--dropout RATE` option. Usually we use a rate of 0.5, which has nice theoretical properties. I tried this on this data set, and it reduced perplexity from 33 to 30 for the 200 node model, but didn't have a large effect on BLEU scores.
 
-Another way to do this is using L2 regularization, which puts a penalty on the L2 norm of the parameter vectors in the model. This can be applied by adding `--cnn_l2 RATE` to the beginning of the option list. I've personally had little luck with getting this to work for neural networks, but it might be worth trying.
+Another way to do this is using L2 regularization, which puts a penalty on the L2 norm of the parameter vectors in the model. This can be applied by adding `--dynet_l2 RATE` to the beginning of the option list. I've personally had little luck with getting this to work for neural networks, but it might be worth trying.
 
 ### Using Subword Units
 
@@ -506,7 +506,7 @@ There are a number settings that should be changed when using the method:
 The final command will look like this:
 
     lamtram/src/lamtram/lamtram-train \
-      --cnn_mem 1024 \
+      --dynet_mem 1024 \
       --model_type encatt \
       --train_src data/train.unk.ja \
       --train_trg data/train.unk.en \
