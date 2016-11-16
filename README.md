@@ -322,7 +322,7 @@ First, let's download and build fast_align:
 Then, we can run fast_align on the training data to build a lexicon, and use the `convert-cond.pl` script to convert it into a format that lamtram can use.
 
     mkdir lexicon
-    paste data/train.{ja,en} | sed 's/	/ ||| /g' > lexicon/train.jaen
+    paste data/train.{ja,en} | sed $'s/\t/ ||| /g' > lexicon/train.jaen
     fast_align/build/fast_align -i lexicon/train.jaen -v -p lexicon/train.jaen.cond > lexicon/train.jaen.align
     lamtram/script/convert-cond.pl < lexicon/train.jaen.cond > lexicon/train.jaen.prob    
 
